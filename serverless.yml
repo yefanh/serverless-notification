@@ -1,0 +1,112 @@
+service: intelligent-notification-system
+
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${env:AWS_REGION, "us-east-1"}
+  stage: ${opt:stage, "dev"}
+  environment:
+    AWS_REGION: ${self:provider.region}
+    INCOMING_QUEUE_URL:
+      Ref: IncomingQueue
+    PRIORITY_QUEUE_URL:
+      Ref: PriorityQueue
+    PREFERENCES_TABLE_NAME:
+      Ref: PreferencesTable
+    OPENAI_API_KEY: ${env:OPENAI_API_KEY}
+    OPENAI_MODEL: ${env:OPENAI_MODEL, "gpt-4o-mini"}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:ChangeMessageVisibility
+      Resource:
+        - Fn::GetAtt: [IncomingQueue, Arn]
+        - Fn::GetAtt: [PriorityQueue, Arn]
+    - Effect: Allow
+      Action:
+        - s3:GetObject
+      Resource:
+        - arn:aws:s3:::${self:service}-${self:provider.stage}-events-bucket/*
+    - Effect: Allow
+      Action:
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+      Resource:
+        - Fn::GetAtt: [PreferencesTable, Arn]
+
+functions:
+  ingestion:
+    handler: services/ingestion/handler.handler
+    events:
+      - httpApi:
+          path: /events
+          method: post
+      - s3:
+          bucket: ${self:service}-${self:provider.stage}-events-bucket
+          event: s3:ObjectCreated:*
+  ranking:
+    handler: services/ranking/handler.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - IncomingQueue
+              - Arn
+  dispatch:
+    handler: services/dispatch/handler.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - PriorityQueue
+              - Arn
+
+resources:
+  Resources:
+    IncomingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-incoming
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [IncomingDlq, Arn]
+          maxReceiveCount: 5
+    IncomingDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-incoming-dlq
+    PriorityQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-priority
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [PriorityDlq, Arn]
+          maxReceiveCount: 5
+    PriorityDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-priority-dlq
+    EventsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${self:provider.stage}-events-bucket
+    PreferencesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-${self:provider.stage}-preferences
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+
