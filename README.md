@@ -4,13 +4,13 @@ LLM-powered, low-latency notification pipeline built on an event-driven AWS stac
 
 ## Goals
 - Sub-1s end-to-end latency from event ingestion to queued notification.
-- Personalized ranking and timing via OpenAI-powered scoring per user segment.
+- Personalized ranking and timing via Gemini-powered scoring per user segment.
 - Operational resilience: DLQs, rate limiting, exponential backoff, observability.
 
 ## Architecture (high level)
 - **Event ingestion**: S3 event/Lambda or API Gateway -> normalizes payloads -> pushes to SQS.
 - **Preference lookup**: DynamoDB stores user/channel preferences and quiet hours; queried during ranking/dispatch.
-- **Ranking service**: Lambda that dequeues, enriches, and calls OpenAI API to score/priority-rank notifications per segment.
+- **Ranking service**: Lambda that dequeues, enriches, and calls Gemini API to score/priority-rank notifications per segment.
 - **Dispatchers**: Channel-specific Lambdas (email/SMS/push/webhook) pull prioritized messages, apply rate limits, and send with backoff + DLQ on failure.
 - **Observability**: CloudWatch metrics + structured logs; DLQ alarms for investigation.
 
@@ -18,7 +18,7 @@ LLM-powered, low-latency notification pipeline built on an event-driven AWS stac
 1) Document architecture and workflows. **(you are here)**
 2) Scaffold project: repo layout, sample env config, stub Lambdas/services.
 3) Event ingestion path: S3 trigger -> transformer -> SQS (with DLQ).
-4) Ranking service: OpenAI scoring + prioritization queue.
+4) Ranking service: Gemini scoring + prioritization queue.
 5) Dispatch service: preference checks, rate limiting, exponential backoff, DLQs.
 6) Deploy/test workflows: IaC (Serverless/Terraform) + local test harness.
 
@@ -29,12 +29,12 @@ LLM-powered, low-latency notification pipeline built on an event-driven AWS stac
 - `docs/` – Architecture, runbooks, and ops playbooks.
 
 ## Prereqs (planned)
-- Node.js LTS, pnpm/npm, AWS CLI configured, OpenAI API key for ranking.
+- Node.js LTS, pnpm/npm, AWS CLI configured, Gemini API key for ranking.
 
 ## Deploying with Serverless (AWS)
 - Install the Serverless Framework CLI globally: `npm install -g serverless` (once on your machine).
 - Configure AWS credentials for your account: `aws configure` (or environment variables).
-- Set `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`) in your shell.
+- Set `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`) in your shell.
 - From the project root:
   - Deploy: `npm run deploy` (runs `serverless deploy` using `serverless.yml`).
   - Remove stack: `npm run remove`.
@@ -50,7 +50,7 @@ The Serverless config wires:
 - Build the project: `npm run build`.
 - Run the demo: `npm run local:ranking-demo`.
 - Behavior:
-  - Without `OPENAI_API_KEY`, uses the local `fallbackScore` heuristic.
-  - With `OPENAI_API_KEY`, calls OpenAI via `scoreWithLLM` and prints the LLM-based score/priority/sendAfter.
+  - Without `GEMINI_API_KEY`, uses the local `fallbackScore` heuristic.
+  - With `GEMINI_API_KEY`, calls Gemini via `scoreWithLLM` and prints the LLM-based score/priority/sendAfter.
 
 Next: build the scaffold and stub services so each phase can be implemented incrementally.

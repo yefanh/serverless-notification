@@ -1,5 +1,5 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { logger } from "../../packages/libs/logger";
 import {
   Channel,
@@ -10,16 +10,18 @@ import {
 
 const region = process.env.AWS_REGION || "us-east-1";
 const priorityQueueUrl = process.env.PRIORITY_QUEUE_URL;
-const openaiApiKey = process.env.OPENAI_API_KEY;
-const openaiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+// Gemini config
+const geminiApiKey = process.env.GEMINI_API_KEY;
+// Use gemini-2.5-pro as it provides high intelligence and is currently available.
+// (gemini-3-pro-preview may hit quota limits on free tier).
+const geminiModelName = process.env.GEMINI_MODEL || "gemini-2.5-pro";
 
 // SQS client used to send ranked messages to the priority queue.
 const sqs = new SQSClient({ region });
 
-// OpenAI client; only used when OPENAI_API_KEY is configured.
-const openai = new OpenAI({
-  apiKey: openaiApiKey,
-});
+// Gemini client; only instantiated when an API key is present.
+const genAI = geminiApiKey ? new GoogleGenerativeAI(geminiApiKey) : null;
 
 /**
  * Choose a delivery channel for this notification.
@@ -34,8 +36,8 @@ export function pickChannel(event: NotificationEvent): Channel {
 }
 
 /**
- * Simple local fallback scoring that does not depend on OpenAI.
- * Useful for local debugging or when OPENAI_API_KEY is not configured.
+ * Simple local fallback scoring that does not depend on any external LLM.
+ * Useful for local debugging or when GEMINI_API_KEY is not configured.
  */
 export function fallbackScore(event: NotificationEvent): {
   score: number;
@@ -56,30 +58,25 @@ export function fallbackScore(event: NotificationEvent): {
 }
 
 /**
- * Score and prioritize the notification using OpenAI.
+ * Score and prioritize the notification using Gemini.
  * - Input: normalized NotificationEvent
  * - Output: score (0-1), priority (1-10), optional sendAfter (ISO timestamp)
- *
- * Debugging tips:
- * - First run without OPENAI_API_KEY to verify fallbackScore behavior.
- * - After configuring OPENAI_API_KEY, temporarily log the raw OpenAI response if needed.
  */
 export async function scoreWithLLM(event: NotificationEvent): Promise<{
   score: number;
   priority: number;
   sendAfter?: string;
 }> {
-  if (!openaiApiKey) {
-    logger.warn("OPENAI_API_KEY not set, using fallback scoring", {
+  if (!genAI) {
+    logger.warn("GEMINI_API_KEY not set, using fallback scoring", {
       eventId: event.eventId,
     });
     return fallbackScore(event);
   }
 
-  const systemPrompt =
-    "You are a notification ranking engine. Return ONLY valid JSON with fields: score (0-1), priority (1-10, 1=highest), sendAfter (ISO string or null). No explanation.";
+  const model = genAI.getGenerativeModel({ model: geminiModelName });
 
-  const userPrompt = `
+  const prompt = `
 Notification event:
 - eventId: ${event.eventId}
 - source: ${event.source}
@@ -100,38 +97,52 @@ Respond with JSON only, e.g.:
 {"score":0.92,"priority":1,"sendAfter":null}
 `;
 
-  try {
-    const completion = await openai.chat.completions.create({
-      model: openaiModel,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.1,
-    });
+  const MAX_RETRIES = 3;
+  // Increase base delay to 10 seconds to handle strict Gemini 3 limits (often requires ~20s wait)
+  const BASE_DELAY_MS = 10000;
 
-    const raw = completion.choices[0]?.message?.content?.trim() || "";
-    logger.debug("LLM raw response", { eventId: event.eventId, raw });
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await model.generateContent(prompt);
+      let text = result.response.text().trim();
+      // Remove markdown code blocks if present
+      if (text.startsWith("```")) {
+        text = text.replace(/^```(json)?\s*/, "").replace(/\s*```$/, "");
+      }
+      logger.debug("Gemini raw response", { eventId: event.eventId, raw: text });
 
-    const parsed = JSON.parse(raw) as {
-      score: number;
-      priority: number;
-      sendAfter?: string | null;
-    };
+      const parsed = JSON.parse(text) as {
+        score: number;
+        priority: number;
+        sendAfter?: string | null;
+      };
 
-    const score = typeof parsed.score === "number" ? parsed.score : 0.5;
-    const priority = typeof parsed.priority === "number" ? parsed.priority : 5;
-    const sendAfter =
-      parsed.sendAfter && typeof parsed.sendAfter === "string" ? parsed.sendAfter : undefined;
+      const score = typeof parsed.score === "number" ? parsed.score : 0.5;
+      const priority = typeof parsed.priority === "number" ? parsed.priority : 5;
+      const sendAfter =
+        parsed.sendAfter && typeof parsed.sendAfter === "string" ? parsed.sendAfter : undefined;
 
-    return { score, priority, sendAfter };
-  } catch (err) {
-    logger.error("LLM scoring failed, falling back", {
-      eventId: event.eventId,
-      error: (err as Error)?.message,
-    });
-    return fallbackScore(event);
+      return { score, priority, sendAfter };
+    } catch (err: any) {
+      const message = err?.message || "";
+      const isRateLimit = message.includes("429") || message.includes("Quota exceeded") || message.includes("Too Many Requests");
+      
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1); // 2s, 4s, 8s...
+        logger.warn(`Gemini rate limit hit, retrying in ${delay}ms...`, { eventId: event.eventId, attempt });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      logger.error("Gemini scoring failed, falling back", {
+        eventId: event.eventId,
+        error: message,
+        attempt,
+      });
+      return fallbackScore(event);
+    }
   }
+  return fallbackScore(event);
 }
 
 /**
@@ -191,3 +202,4 @@ export const handler = async (event: any) => {
   logger.info("Ranking complete", { count: records.length });
   return { processed: records.length };
 };
+

@@ -15,8 +15,8 @@ provider:
       Ref: PriorityQueue
     PREFERENCES_TABLE_NAME:
       Ref: PreferencesTable
-    OPENAI_API_KEY: ${env:OPENAI_API_KEY}
-    OPENAI_MODEL: ${env:OPENAI_MODEL, "gpt-4o-mini"}
+    GEMINI_API_KEY: ${env:GEMINI_API_KEY}
+    GEMINI_MODEL: ${env:GEMINI_MODEL, "gemini-2.5-pro"}
   iamRoleStatements:
     - Effect: Allow
       Action:

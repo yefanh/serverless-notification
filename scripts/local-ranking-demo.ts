@@ -17,7 +17,8 @@ async function main() {
     },
   };
 
-  const useLlm = Boolean(process.env.OPENAI_API_KEY);
+  // Use Gemini when GEMINI_API_KEY is set; otherwise fallback.
+  const useLlm = Boolean(process.env.GEMINI_API_KEY);
 
   const result = useLlm ? await scoreWithLLM(event) : fallbackScore(event);
 
@@ -40,4 +41,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

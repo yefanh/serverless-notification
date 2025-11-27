@@ -13,8 +13,8 @@
 ## Environment variables (ranking)
 - `AWS_REGION`
 - `PRIORITY_QUEUE_URL` (SQS queue used by ranking Lambda; pair with `priority-dlq`)
-- `OPENAI_API_KEY` (for LLM-based scoring; if unset, fallback heuristic scoring is used)
-- `OPENAI_MODEL` (optional, default `gpt-4o-mini`)
+- `GEMINI_API_KEY` (for LLM-based scoring; if unset, fallback heuristic scoring is used)
+- `GEMINI_MODEL` (optional, default `gpt-4o-mini`)
 
 ## Environment variables (dispatch)
 - `AWS_REGION`
