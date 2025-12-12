@@ -15,7 +15,7 @@ LLM-powered, low-latency notification pipeline built on an event-driven AWS stac
 - **Observability**: CloudWatch metrics + structured logs; DLQ alarms for investigation.
 
 ## Build plan (phases)
-1) Document architecture and workflows. **(you are here)**
+1) Document architecture and workflows. 
 2) Scaffold project: repo layout, sample env config, stub Lambdas/services.
 3) Event ingestion path: S3 trigger -> transformer -> SQS (with DLQ).
 4) Ranking service: Gemini scoring + prioritization queue.
